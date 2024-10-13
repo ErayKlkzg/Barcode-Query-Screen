@@ -1,0 +1,372 @@
+&---------------------------------------------------------------------*
+*& Report ZIT_PP_R_ORME_BARKOD
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zit_pp_r_orme_barkod.
+
+DATA : gt_items   TYPE TABLE OF zit_pp_s_orme_barkod WITH HEADER LINE,
+       gs_items   LIKE LINE OF gt_items,
+       gt_messtab TYPE TABLE OF bdcmsgcoll WITH HEADER LINE.
+
+SELECTION-SCREEN BEGIN OF BLOCK wr WITH FRAME TITLE TEXT-001.
+PARAMETER pwerks TYPE werks_d DEFAULT 'T003' OBLIGATORY.
+SELECTION-SCREEN END OF BLOCK wr.
+SELECTION-SCREEN BEGIN OF BLOCK sc WITH FRAME TITLE TEXT-002.
+SELECT-OPTIONS:
+  sbrkod  FOR gs_items-brkod,
+  smatnr  FOR gs_items-matnr,
+  scharg  FOR gs_items-charg,
+  saufnr  FOR gs_items-aufnr,
+  sarbpl  FOR gs_items-arbpl,
+  skalte  FOR gs_items-kalte,
+  srueck  FOR gs_items-rueck,
+  srmzhl  FOR gs_items-rmzhl,                 *
+  svbeln  FOR gs_items-vbeln,
+  sposnr  FOR gs_items-posnr,
+  sdatum  FOR gs_items-datum,
+  suzeit  FOR gs_items-uzeit,
+  sstat   FOR gs_items-stat,
+  bstnk   FOR gs_items-bstnk.
+SELECTION-SCREEN END OF BLOCK sc.
+
+START-OF-SELECTION.
+  PERFORM get_data.
+
+END-OF-SELECTION.
+  PERFORM write_data.
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA
+*&---------------------------------------------------------------------*
+FORM get_data .
+
+  DATA: lv_objnr TYPE caufv-objnr,
+        lv_txt   TYPE j_txt04,
+        ls_afvv  TYPE afvv,                   
+        lv_count TYPE i,
+        lt_tc37a TYPE TABLE OF tc37a WITH HEADER LINE.
+
+  CLEAR: gs_items,gt_items.
+  REFRESH: gt_items.
+
+  SELECT * INTO CORRESPONDING FIELDS OF gs_items
+    FROM zit_pp_t_barkod
+   WHERE ( brkod IN sbrkod AND ( brkod GT '2000000000' AND  brkod NOT LIKE '7%' ) )
+     AND smatnr IN smatnr
+     AND charg IN scharg
+     AND aufnr IN saufnr
+     AND arbpl IN sarbpl
+     AND kalte IN skalte
+     AND rueck IN srueck
+     AND rmzhl IN srmzhl
+     AND vbeln IN svbeln
+     AND posnr IN sposnr
+     AND datum IN sdatum
+     AND uzeit IN suzeit
+     AND stat  IN sstat .
+    gs_items-matnr = gs_items-smatnr.
+    COLLECT gs_items INTO gt_items.
+    CLEAR gs_items.
+  ENDSELECT.
+
+  LOOP AT gt_items.
+    IF gt_items-aufnr IS NOT INITIAL.
+      SELECT SINGLE plnbez INTO gt_items-matnr
+                         FROM caufv
+                        WHERE aufnr EQ gt_items-aufnr.
+
+      SELECT SINGLE maktx INTO gt_items-maktx
+                          FROM makt
+                         WHERE matnr EQ gt_items-matnr
+                           AND spras EQ sy-langu.
+      SELECT SINGLE kdauf kdpos INTO (gt_items-kdauf, gt_items-kdpos)
+        FROM caufv WHERE aufnr EQ gt_items-aufnr.
+      IF sy-subrc IS INITIAL.
+        SELECT SINGLE bstnk FROM vbak INTO gt_items-bstnk WHERE vbeln EQ gt_items-kdauf.
+      ENDIF.
+    ELSE.
+      SELECT SINGLE matnr INTO gt_items-matnr
+                          FROM mch1
+                         WHERE charg EQ gt_items-charg
+                           AND matnr EQ gt_items-matnr
+                           AND lvorm NE 'X'.
+      SELECT SINGLE maktx INTO gt_items-maktx
+                        FROM makt
+                       WHERE matnr EQ gt_items-matnr
+                         AND spras EQ sy-langu.
+    ENDIF.
+
+    IF gt_items-stat EQ '04' OR gt_items-stat EQ '05'.
+      gt_items-stok = 'C610'.
+    ELSEIF gt_items-stat EQ '01'.
+      gt_items-stok = 'C510'.
+    ELSEIF gt_items-stat EQ '02'.
+      gt_items-stok = 'C310'.
+    ENDIF.
+
+    SELECT * INTO CORRESPONDING FIELDS OF TABLE lt_tc37a
+    FROM tc37a WHERE schgrup EQ 'IS'.
+    IF sy-subrc IS INITIAL.
+      LOOP AT lt_tc37a.
+        IF lt_tc37a-begzt EQ '240000'.
+          lt_tc37a-begzt  = '000000'.
+        ENDIF.
+        IF gt_items-uzeit BETWEEN lt_tc37a-begzt
+          AND lt_tc37a-endzt .
+          gt_items-vardiya = lt_tc37a-kaptprog.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    SELECT COUNT(*) INTO lv_count FROM zit_pp_t_barkod
+      WHERE aufnr EQ gt_items-aufnr
+        AND aufnr NE ''
+        AND arbpl EQ gt_items-arbpl
+        AND stat NE '04'.
+    gt_items-atops = lv_count.
+
+    CLEAR lv_count.
+    SELECT COUNT(*) INTO lv_count FROM zit_pp_t_barkod
+    WHERE aufnr EQ gt_items-aufnr
+      AND aufnr NE ''
+      AND arbpl EQ gt_items-arbpl
+      AND datum EQ gt_items-datum
+        AND stat NE '04'
+      AND uzeit GT lt_tc37a-begzt
+      AND uzeit LE gt_items-uzeit.
+    gt_items-vtops = lv_count.
+
+
+    MODIFY gt_items.
+
+  ENDLOOP.
+
+  DELETE gt_items WHERE bstnk NOT IN bstnk.
+
+  SORT gt_items BY datum uzeit .
+  DATA lv_atops TYPE i.
+  DATA lv_vtops TYPE i.
+  DATA: BEGIN OF lt_v OCCURS 0,
+          datum   TYPE datum,
+          vardiya TYPE char1,
+          arbpl   TYPE arbpl,
+        END OF lt_v
+        .
+  CLEAR: lv_atops,lv_vtops.
+
+  LOOP AT gt_items.
+    MOVE-CORRESPONDING  gt_items TO lt_v.
+    COLLECT lt_v.
+  ENDLOOP.
+*  LOOP AT lt_v.
+*    SELECT * FROM ZIT_PP_T_BARKOD
+*      WHERE datum = lt_v-datum.
+*
+*    ENDSELECT.
+*  ENDLOOP.
+
+ENDFORM.                    " GET_DATA
+*&---------------------------------------------------------------------*
+*&      Form  fill_fc
+*&---------------------------------------------------------------------*
+FORM fill_fc TABLES   _fc STRUCTURE lvc_s_fcat.
+
+  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name   = 'ZIT_PP_S_ORME_BARKOD'
+      i_bypassing_buffer = 'X'
+    CHANGING
+      ct_fieldcat        = _fc[].
+
+  LOOP AT _fc.
+    CASE _fc-fieldname.
+*      when 'WEMNG'.
+*        _fc-scrtext_l = 'Verilen Teyit'.
+*        _fc-scrtext_m = _fc-scrtext_l.
+*        _fc-scrtext_s = _fc-scrtext_l.
+*        _fc-reptext = _fc-scrtext_l.
+      WHEN 'AUFNR'.
+        _fc-hotspot = 'X'.
+      WHEN 'VBELN'.
+        _fc-hotspot = 'X'.
+      WHEN 'AMBLJ'.
+        _fc-scrtext_l = 'Rolik Şekli'.
+        _fc-scrtext_m = _fc-scrtext_l.
+        _fc-scrtext_s = _fc-scrtext_l.
+        _fc-reptext = _fc-scrtext_l.
+    ENDCASE.
+    MODIFY _fc.
+  ENDLOOP.
+ENDFORM.                    "fill_fc
+*&---------------------------------------------------------------------*
+*&      Form  write_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM write_data .
+  DATA : l_fc TYPE TABLE OF lvc_s_fcat WITH HEADER LINE,
+         l_ly TYPE lvc_s_layo,
+         l_vr TYPE disvariant.
+
+  PERFORM fill_fc TABLES l_fc.
+  l_vr-username = sy-uname.
+  l_vr-report = sy-repid.
+  l_ly-sel_mode = 'A'.
+  l_ly-zebra = 'X'.
+  l_ly-no_toolbar = space.
+  l_ly-info_fname = 'STOK'.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY_LVC'
+    EXPORTING
+      i_bypassing_buffer       = 'X'
+      i_callback_program       = sy-repid
+      i_callback_pf_status_set = '100_PF'
+      i_callback_user_command  = 'USER_COMMAND_0100'
+*     i_grid_settings          = gs_grid_settings
+      is_layout_lvc            = l_ly
+      it_fieldcat_lvc          = l_fc[]
+      is_variant               = l_vr
+      i_save                   = 'A'
+      i_default                = 'X'
+    TABLES
+      t_outtab                 = gt_items[]
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+
+ENDFORM.                    " WRITE_DATA
+*&---------------------------------------------------------------------*
+*&      Form  100_pf
+*&---------------------------------------------------------------------*
+FORM 100_pf USING lt_extab TYPE kkblo_t_extab.
+  SET PF-STATUS 'STANDARD' EXCLUDING lt_extab.
+  SET TITLEBAR '100_TT'.
+ENDFORM.                                                    "100_pf
+*&---------------------------------------------------------------------*
+*&      Form  user_command_0100
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->R_UCOMM      text
+*      -->LS_SELFIELD  text
+*----------------------------------------------------------------------*
+FORM user_command_0100 USING r_ucomm
+      ls_selfield TYPE slis_selfield.
+
+  DATA: gd_repid LIKE sy-repid,
+        ref_grid TYPE REF TO cl_gui_alv_grid.
+  IF ref_grid IS INITIAL.
+    CALL FUNCTION 'GET_GLOBALS_FROM_SLVC_FULLSCR'
+      IMPORTING
+        e_grid = ref_grid.
+  ENDIF.
+  IF NOT ref_grid IS INITIAL.
+    CALL METHOD ref_grid->check_changed_data .
+  ENDIF.
+
+  CASE r_ucomm.
+    WHEN '&IC1'.
+      CHECK ls_selfield-value IS NOT INITIAL.
+      CASE ls_selfield-fieldname.
+        WHEN 'AUFNR'.
+          SET PARAMETER ID 'ANR' FIELD ls_selfield-value .
+          CALL TRANSACTION 'CO03' AND SKIP FIRST SCREEN .
+        WHEN 'VBELN'.
+          SET PARAMETER ID 'VL' FIELD ls_selfield-value .
+          CALL TRANSACTION 'VL03N' AND SKIP FIRST SCREEN .
+      ENDCASE.
+    WHEN 'YENILE'.
+      PERFORM get_data.
+    WHEN 'BOS'.
+      PERFORM update.
+      PERFORM get_data.
+  ENDCASE.
+  ls_selfield-refresh = 'X'.
+  ls_selfield-row_stable = 'X'.
+ENDFORM.                 " USER_COMMAND_0100  INPUT
+*&---------------------------------------------------------------------*
+*&      Form  UPDATE
+*&---------------------------------------------------------------------*
+FORM update .
+  DATA : lt_rows   TYPE lvc_t_row,
+         ls_rows   TYPE lvc_s_row,
+         ls_barkod TYPE zit_pp_t_barkod,
+         ls_aufk   TYPE aufk.
+  DATA: gd_repid LIKE sy-repid,
+        ref_grid TYPE REF TO cl_gui_alv_grid.
+  IF ref_grid IS INITIAL.
+    CALL FUNCTION 'GET_GLOBALS_FROM_SLVC_FULLSCR'
+      IMPORTING
+        e_grid = ref_grid.
+  ENDIF.
+
+  CALL METHOD ref_grid->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_rows.
+  CLEAR: gt_messtab[],gt_messtab.
+  LOOP AT lt_rows INTO ls_rows.
+    READ TABLE gt_items INTO gs_items INDEX ls_rows-index.
+    IF gs_items-stat IS INITIAL.
+      CLEAR ls_aufk.
+      SELECT SINGLE * INTO ls_aufk FROM aufk WHERE aufnr EQ gs_items-aufnr.
+      IF ls_aufk-zzip_orgu_sekli EQ '01'.
+        CLEAR: gt_messtab.
+        gt_messtab-msgtyp = 'E'.
+        gt_messtab-msgnr = '000'.
+        gt_messtab-msgid = 'ZIT_PP'.
+        gt_messtab-msgv1 = gs_items-brkod.
+        gt_messtab-msgv2 = 'Barkodu için'.
+        gt_messtab-msgv3 = 'Örgü Şekli Açık En'.
+        gt_messtab-msgv4 = 'Satır için işlem yapılmadı!!!'.
+        APPEND gt_messtab.
+      ELSE.
+        SELECT SINGLE * INTO ls_barkod FROM zit_pp_t_barkod WHERE brkod EQ gs_items-brkod.
+        ls_barkod-amblj = 'BOS'.
+        MODIFY zit_pp_t_barkod FROM ls_barkod.
+        CLEAR: gt_messtab.
+        gt_messtab-msgtyp = 'S'.
+        gt_messtab-msgnr = '000'.
+        gt_messtab-msgid = 'ZIT_PP'.
+        gt_messtab-msgv1 = gs_items-brkod.
+        gt_messtab-msgv2 = 'Barkodu için'.
+        gt_messtab-msgv3 = 'İşlem Tamamlandı'.
+        APPEND gt_messtab.
+      ENDIF.
+    ELSE.
+      CLEAR: gt_messtab.
+      gt_messtab-msgtyp = 'E'.
+      gt_messtab-msgnr = '000'.
+      gt_messtab-msgid = 'ZIT_PP'.
+      gt_messtab-msgv1 = gs_items-brkod.
+      gt_messtab-msgv2 = 'Barkodunun'.
+      gt_messtab-msgv3 = 'Statüsü uygun değil'.
+      APPEND gt_messtab.
+    ENDIF.
+  ENDLOOP.
+  PERFORM show_message.
+ENDFORM.                    " UPDATE
+*&---------------------------------------------------------------------*
+*&      Form  SHOW_MESSAGE 
+*&---------------------------------------------------------------------*
+FORM show_message .
+  DATA lt_message_tab TYPE esp1_message_tab_type WITH HEADER LINE.
+
+  IF NOT gt_messtab[] IS INITIAL.
+    LOOP AT gt_messtab.
+      lt_message_tab-msgid = gt_messtab-msgid.
+      lt_message_tab-msgty = gt_messtab-msgtyp.
+      lt_message_tab-msgno = gt_messtab-msgnr.
+      lt_message_tab-msgv1 = gt_messtab-msgv1.
+      lt_message_tab-msgv2 = gt_messtab-msgv2.
+      lt_message_tab-msgv3 = gt_messtab-msgv3.
+      lt_message_tab-msgv4 = gt_messtab-msgv4.
+      APPEND lt_message_tab .
+    ENDLOOP.
+    CALL FUNCTION 'C14Z_MESSAGES_SHOW_AS_POPUP'
+      TABLES
+        i_message_tab = lt_message_tab[].
+
+    CLEAR gt_messtab[].
+  ENDIF.
+ENDFORM.                    " SHOW_MESSAGE
